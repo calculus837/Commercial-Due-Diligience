@@ -67,12 +67,115 @@ _ensure_data_exists()
 
 
 # ======================================================================
+# Page config (must be the first Streamlit command)
+# ======================================================================
+st.set_page_config(
+    page_title="CDD Deal Room",
+    page_icon="🔍",
+    layout="wide",
+)
+
+# ======================================================================
+# Sidebar — Data Upload & Column Mapping
+# ======================================================================
+st.sidebar.title("🔍 CDD Deal Room")
+st.sidebar.markdown("**Sector:** Supply Chain Software")
+st.sidebar.divider()
+
+st.sidebar.subheader("📂 Upload Your Data")
+txn_upload = st.sidebar.file_uploader(
+    "Transaction Ledger (CSV)", type="csv", key="txn_upload"
+)
+fin_upload = st.sidebar.file_uploader(
+    "Income Statement (CSV)", type="csv", key="fin_upload"
+)
+
+# --- Resolve active transaction path & optional column mapping ----------
+_txn_content_hash: int | None = None
+_active_txn_path: str = RISKY_CSV
+
+if txn_upload is not None:
+    txn_raw = pd.read_csv(txn_upload)
+    raw_cols = list(txn_raw.columns)
+
+    st.sidebar.divider()
+    st.sidebar.subheader("🗂️ Data Mapping")
+    st.sidebar.caption(
+        "Map your CSV columns to the fields the engine expects. "
+        "If headers already match, the defaults will be correct."
+    )
+
+    def _default_idx(options: list[str], name: str) -> int:
+        return options.index(name) if name in options else 0
+
+    date_col = st.sidebar.selectbox(
+        "Date", raw_cols, index=_default_idx(raw_cols, "Date")
+    )
+    client_col = st.sidebar.selectbox(
+        "Client_ID", raw_cols, index=_default_idx(raw_cols, "Client_ID")
+    )
+    revenue_col = st.sidebar.selectbox(
+        "Revenue_USD", raw_cols, index=_default_idx(raw_cols, "Revenue_USD")
+    )
+
+    # Apply mapping (only rename columns that differ)
+    col_map = {}
+    if date_col != "Date":
+        col_map[date_col] = "Date"
+    if client_col != "Client_ID":
+        col_map[client_col] = "Client_ID"
+    if revenue_col != "Revenue_USD":
+        col_map[revenue_col] = "Revenue_USD"
+    if col_map:
+        txn_raw = txn_raw.rename(columns=col_map)
+
+    # Persist to a temp CSV so the existing file-path-based engine works
+    _uploaded_txn_path = os.path.join(DATA_DIR, "_uploaded_transactions.csv")
+    txn_raw.to_csv(_uploaded_txn_path, index=False)
+    _active_txn_path = _uploaded_txn_path
+    _txn_content_hash = hash(txn_upload.getvalue())
+
+# --- Resolve active financials path ------------------------------------
+_fin_content_hash: int | None = None
+_active_fin_path: str = FIN_CSV
+
+if fin_upload is not None:
+    fin_raw = pd.read_csv(fin_upload)
+    _uploaded_fin_path = os.path.join(DATA_DIR, "_uploaded_financials.csv")
+    fin_raw.to_csv(_uploaded_fin_path, index=False)
+    _active_fin_path = _uploaded_fin_path
+    _fin_content_hash = hash(fin_upload.getvalue())
+
+# --- Sidebar target label -----------------------------------------------
+_using_upload = txn_upload is not None
+_target_label = "User Upload" if _using_upload else "Risky Co (Demo)"
+st.sidebar.divider()
+st.sidebar.markdown(f"**Target:** {_target_label}")
+
+page = st.sidebar.radio(
+    "Navigate",
+    ["📊 Overview", "💰 Revenue Audit", "🏰 Market Analysis", "📋 Investment Memo"],
+)
+
+st.sidebar.divider()
+st.sidebar.markdown(
+    "**About**\n\n"
+    "This is an automated **Commercial Due Diligence** demo engine. "
+    "It analyses synthetic transaction, financial, and market data to "
+    "surface structural risks in M&A targets — including revenue "
+    "concentration, cohort retention, EBITDA normalisation, competitive "
+    "pricing, and customer sentiment.\n\n"
+    "Built with Python · Pandas · Plotly · Streamlit"
+)
+
+
+# ======================================================================
 # Cache heavy computations
 # ======================================================================
 @st.cache_data
-def run_revenue_audit():
+def run_revenue_audit(txn_path: str, content_hash: int | None = None):
     auditor = RevenueAuditor()
-    auditor.load_data(RISKY_CSV)
+    auditor.load_data(txn_path)
     results = auditor.run_concentration_audit()
     flags = auditor.get_red_flags()
     retention = auditor.run_cohort_analysis()
@@ -80,9 +183,9 @@ def run_revenue_audit():
 
 
 @st.cache_data
-def run_ebitda_normalisation():
+def run_ebitda_normalisation(fin_path: str, content_hash: int | None = None):
     norm = EBITDANormalizer()
-    norm.load_data(FIN_CSV)
+    norm.load_data(fin_path)
     adj_df = norm.normalize_ebitda()
     return norm, adj_df
 
@@ -107,44 +210,15 @@ def run_sentiment_audit():
 # ======================================================================
 # Load everything
 # ======================================================================
-auditor, conc_results, red_flags, retention_matrix = run_revenue_audit()
-ebitda_norm, ebitda_df = run_ebitda_normalisation()
+auditor, conc_results, red_flags, retention_matrix = run_revenue_audit(
+    _active_txn_path, _txn_content_hash
+)
+ebitda_norm, ebitda_df = run_ebitda_normalisation(
+    _active_fin_path, _fin_content_hash
+)
 market_analyst, pv_fig = run_market_analysis()
 sentiment_auditor, sentiment_result, sentiment_fig = run_sentiment_audit()
 reviews_df = pd.read_csv(REVIEWS_CSV)
-
-# ======================================================================
-# Page config
-# ======================================================================
-st.set_page_config(
-    page_title="CDD Deal Room · Risky Co",
-    page_icon="🔍",
-    layout="wide",
-)
-
-# ======================================================================
-# Sidebar
-# ======================================================================
-st.sidebar.title("🔍 CDD Deal Room")
-st.sidebar.markdown("**Target:** Risky Co")
-st.sidebar.markdown("**Sector:** Supply Chain Software")
-st.sidebar.divider()
-
-page = st.sidebar.radio(
-    "Navigate",
-    ["📊 Overview", "💰 Revenue Audit", "🏰 Market Analysis", "📋 Investment Memo"],
-)
-
-st.sidebar.divider()
-st.sidebar.markdown(
-    "**About**\n\n"
-    "This is an automated **Commercial Due Diligence** demo engine. "
-    "It analyses synthetic transaction, financial, and market data to "
-    "surface structural risks in M&A targets — including revenue "
-    "concentration, cohort retention, EBITDA normalisation, competitive "
-    "pricing, and customer sentiment.\n\n"
-    "Built with Python · Pandas · Plotly · Streamlit"
-)
 
 
 # ======================================================================
@@ -173,7 +247,7 @@ def hhi_color(hhi: float) -> str:
 # ######################################################################
 if page == "📊 Overview":
     st.title("📊 Executive Overview")
-    st.markdown("High-level risk metrics for **Risky Co** at a glance.")
+    st.markdown(f"High-level risk metrics for **{_target_label}** at a glance.")
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric(
@@ -349,7 +423,7 @@ elif page == "🏰 Market Analysis":
 #  INVESTMENT MEMO
 # ######################################################################
 elif page == "📋 Investment Memo":
-    st.title("📋 Investment Memo — Risky Co")
+    st.title(f"📋 Investment Memo — {_target_label}")
     st.markdown("*Auto-generated MECE (Mutually Exclusive, Collectively Exhaustive) assessment*")
 
     st.divider()

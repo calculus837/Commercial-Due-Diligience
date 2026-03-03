@@ -34,6 +34,9 @@ class RevenueAuditor:
         if missing:
             raise ValueError(f"CSV is missing required columns: {missing}")
 
+        # Standardise messy real-world data before any analysis
+        self.clean_input_data()
+
         # Pre-compute client-level revenue
         self.client_revenue = (
             self.df.groupby("Client_ID")["Revenue_USD"]
@@ -45,6 +48,57 @@ class RevenueAuditor:
         print(f"✓ Loaded {len(self.df):,} transactions | "
               f"{self.client_revenue.size} clients | "
               f"${self.total_revenue:,.2f} total revenue")
+        return self.df
+
+    # ------------------------------------------------------------------
+    # Data cleaning / standardisation
+    # ------------------------------------------------------------------
+    def clean_input_data(self) -> pd.DataFrame:
+        """
+        Sanitise raw CSV data so the engine works with messy real-world
+        exports (QuickBooks, SAP, etc.).
+
+        Handles:
+          • Date column  → parsed to datetime (mixed formats OK).
+          • Revenue_USD  → stripped of currency symbols ($, €, £, ₦, ¥, commas)
+                           and cast to float.
+          • Missing values → rows with NaN in Client_ID or Revenue_USD are
+                             dropped; NaN dates are forward-filled then dropped.
+        """
+        if self.df is None:
+            raise RuntimeError("Call load_data() before clean_input_data().")
+
+        df = self.df
+
+        # --- 1. Parse Date column ----------------------------------------
+        if "Date" in df.columns:
+            df["Date"] = (
+                pd.to_datetime(df["Date"], errors="coerce")
+            )
+            # Forward-fill isolated NaT gaps, then drop any remaining
+            df["Date"] = df["Date"].ffill()
+            df.dropna(subset=["Date"], inplace=True)
+
+        # --- 2. Strip currency symbols & cast Revenue_USD to float --------
+        if df["Revenue_USD"].dtype == object:
+            df["Revenue_USD"] = (
+                df["Revenue_USD"]
+                .astype(str)
+                .str.replace(r"[^\d.\-]", "", regex=True)   # keep digits, dots, minus
+            )
+        df["Revenue_USD"] = pd.to_numeric(df["Revenue_USD"], errors="coerce")
+
+        # --- 3. Handle missing values -------------------------------------
+        before = len(df)
+        df.dropna(subset=["Client_ID", "Revenue_USD"], inplace=True)
+        dropped = before - len(df)
+        if dropped:
+            print(f"⚠ Dropped {dropped} row(s) with missing Client_ID or Revenue_USD")
+
+        # --- 4. Reset index after drops -----------------------------------
+        df.reset_index(drop=True, inplace=True)
+
+        self.df = df
         return self.df
 
     # ------------------------------------------------------------------

@@ -1,0 +1,9 @@
+# Stop the agent from committing the local environment
+venv/
+__pycache__/
+*.pyc
+.env
+
+# Raw data / generated files (re-generate with data_factory.py)
+data/*.csv
+data/*.html

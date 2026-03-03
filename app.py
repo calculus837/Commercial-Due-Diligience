@@ -19,16 +19,51 @@ import plotly.express as px
 
 from revenue_integrity import RevenueAuditor, EBITDANormalizer
 from market_moat import MarketAnalyst, SentimentAuditor
+from data_factory import (
+    generate_healthy,
+    generate_risky,
+    generate_financial_statements,
+    generate_market_pricing,
+    generate_customer_reviews,
+)
 
 # ======================================================================
 # Paths
 # ======================================================================
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 
 RISKY_CSV = os.path.join(DATA_DIR, "risky_co.csv")
+HEALTHY_CSV = os.path.join(DATA_DIR, "healthy_co.csv")
 FIN_CSV = os.path.join(DATA_DIR, "financial_statements.csv")
 PRICING_CSV = os.path.join(DATA_DIR, "market_pricing.csv")
 REVIEWS_CSV = os.path.join(DATA_DIR, "customer_reviews.csv")
+
+
+# ======================================================================
+# Auto-generate data if missing (e.g. first run on Streamlit Cloud)
+# ======================================================================
+def _ensure_data_exists():
+    """Generate all CSV files if the data/ folder is empty or missing."""
+    required_files = [RISKY_CSV, HEALTHY_CSV, FIN_CSV, PRICING_CSV, REVIEWS_CSV]
+    if all(os.path.isfile(f) for f in required_files):
+        return  # everything already exists
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    if not os.path.isfile(HEALTHY_CSV):
+        generate_healthy().to_csv(HEALTHY_CSV, index=False)
+    if not os.path.isfile(RISKY_CSV):
+        generate_risky().to_csv(RISKY_CSV, index=False)
+    if not os.path.isfile(FIN_CSV):
+        generate_financial_statements().to_csv(FIN_CSV, index=False)
+    if not os.path.isfile(PRICING_CSV):
+        generate_market_pricing().to_csv(PRICING_CSV, index=False)
+    if not os.path.isfile(REVIEWS_CSV):
+        generate_customer_reviews().to_csv(REVIEWS_CSV, index=False)
+
+
+_ensure_data_exists()
 
 
 # ======================================================================
@@ -76,6 +111,7 @@ auditor, conc_results, red_flags, retention_matrix = run_revenue_audit()
 ebitda_norm, ebitda_df = run_ebitda_normalisation()
 market_analyst, pv_fig = run_market_analysis()
 sentiment_auditor, sentiment_result, sentiment_fig = run_sentiment_audit()
+reviews_df = pd.read_csv(REVIEWS_CSV)
 
 # ======================================================================
 # Page config
@@ -97,6 +133,17 @@ st.sidebar.divider()
 page = st.sidebar.radio(
     "Navigate",
     ["📊 Overview", "💰 Revenue Audit", "🏰 Market Analysis", "📋 Investment Memo"],
+)
+
+st.sidebar.divider()
+st.sidebar.markdown(
+    "**About**\n\n"
+    "This is an automated **Commercial Due Diligence** demo engine. "
+    "It analyses synthetic transaction, financial, and market data to "
+    "surface structural risks in M&A targets — including revenue "
+    "concentration, cohort retention, EBITDA normalisation, competitive "
+    "pricing, and customer sentiment.\n\n"
+    "Built with Python · Pandas · Plotly · Streamlit"
 )
 
 
@@ -269,7 +316,6 @@ elif page == "🏰 Market Analysis":
         delta="Critical" if sentiment_auditor.brand_health_score < 35 else "Mixed",
         delta_color="inverse",
     )
-    reviews_df = pd.read_csv(REVIEWS_CSV)
     s2.metric("Avg Rating", f"{reviews_df['Rating'].mean():.1f} / 5")
     s3.metric("Total Reviews", f"{len(reviews_df)}")
 
